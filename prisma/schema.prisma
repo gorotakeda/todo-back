@@ -1,0 +1,81 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String      @id @default(uuid())
+  name      String
+  email     String      @unique
+  password  String
+  games1    Game[]      @relation("Player1")
+  games2    Game[]      @relation("Player2")
+  wonGames  Game[]      @relation("Winner")
+  rounds    GameRound[]
+  scores    GameScore[]
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+}
+
+model Game {
+  id             String     @id @default(uuid())
+  player1        User       @relation("Player1", fields: [player1Id], references: [id])
+  player1Id      String
+  player2        User       @relation("Player2", fields: [player2Id], references: [id])
+  player2Id      String
+  status         GameStatus @default(WAITING)
+  currentTurn    String    // player1Id または player2Id を保持
+  availableSeats Int[]
+  winner         User?      @relation("Winner", fields: [winnerId], references: [id])
+  winnerId       String?
+  rounds         GameRound[]
+  scores         GameScore[]
+  trap           GameTrap?
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+}
+
+model GameRound {
+  id              String   @id @default(uuid())
+  game            Game     @relation(fields: [gameId], references: [id])
+  gameId          String
+  turn            Int
+  currentPlayer   User     @relation(fields: [currentPlayerId], references: [id])
+  currentPlayerId String
+  seatSelected    Int
+  hasTrap         Boolean
+  createdAt       DateTime @default(now())
+}
+
+model GameScore {
+  id         String   @id @default(uuid())
+  game       Game     @relation(fields: [gameId], references: [id])
+  gameId     String
+  player     User     @relation(fields: [playerId], references: [id])
+  playerId   String
+  score      Int      @default(0)
+  failures   Int      @default(0)
+  isResetted Boolean  @default(false)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([gameId, playerId])
+}
+
+model GameTrap {
+  id          String   @id @default(uuid())
+  game        Game     @relation(fields: [gameId], references: [id])
+  gameId      String   @unique
+  seatNumber  Int
+  createdAt   DateTime @default(now())
+}
+
+enum GameStatus {
+  WAITING
+  IN_PROGRESS
+  FINISHED
+}
