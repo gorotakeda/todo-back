@@ -23,12 +23,15 @@
     "@nestjs/common": "^11.0.1",
     "@nestjs/core": "^11.0.1",
     "@nestjs/platform-express": "^11.0.1",
+    "@nestjs/platform-socket.io": "^11.0.10",
     "@nestjs/typeorm": "^11.0.0",
+    "@nestjs/websockets": "^11.0.10",
     "@prisma/client": "^5.10.2",
     "pg": "^8.13.3",
     "prisma": "^5.10.2",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
+    "socket.io": "^4.8.1",
     "typeorm": "^0.3.20"
   },
   "devDependencies": {

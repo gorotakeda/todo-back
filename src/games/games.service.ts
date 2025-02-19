@@ -3,10 +3,14 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateGameDto } from './dto/create-game.dto';
 import { SetTrapDto } from './dto/set-trap.dto';
 import { SelectSeatDto } from './dto/select-seat.dto';
+import { GamesGateway } from './games.gateway';
 
 @Injectable()
 export class GamesService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private gamesGateway: GamesGateway,
+  ) {}
 
   async createGame(createGameDto: CreateGameDto) {
     const availableSeats = Array.from({ length: 12 }, (_, i) => i + 1);
@@ -150,7 +154,7 @@ export class GamesService {
           : selectSeatDto.playerId;
     }
 
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       // スコアの更新
       await tx.gameScore.update({
         where: { id: playerScore.id },
@@ -169,7 +173,7 @@ export class GamesService {
       });
 
       // ゲームの状態更新
-      return tx.game.update({
+      const updatedGame = await tx.game.update({
         where: { id: gameId },
         data: {
           availableSeats,
@@ -183,7 +187,14 @@ export class GamesService {
                 : game.player1Id,
         },
       });
+      return updatedGame;
     });
+
+    // ゲーム状態の更新を通知
+    const gameStatusResult = await this.getGameStatus(gameId);
+    this.gamesGateway.notifyGameUpdate(gameId, gameStatusResult);
+
+    return result;
   }
 
   async getGameStatus(gameId: string) {
