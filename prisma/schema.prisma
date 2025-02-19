@@ -25,8 +25,8 @@ model Game {
   id             String     @id @default(uuid())
   player1        User       @relation("Player1", fields: [player1Id], references: [id])
   player1Id      String
-  player2        User       @relation("Player2", fields: [player2Id], references: [id])
-  player2Id      String
+  player2        User?      @relation("Player2", fields: [player2Id], references: [id])
+  player2Id      String?
   status         GameStatus @default(WAITING)
   currentTurn    String    // player1Id または player2Id を保持
   availableSeats Int[]
@@ -76,6 +76,7 @@ model GameTrap {
 
 enum GameStatus {
   WAITING
+  SETTING_TRAP
   IN_PROGRESS
   FINISHED
 }

@@ -4,6 +4,7 @@ import { CreateGameDto } from './dto/create-game.dto';
 import { SetTrapDto } from './dto/set-trap.dto';
 import { SelectSeatDto } from './dto/select-seat.dto';
 import { GamesGateway } from './games.gateway';
+import { GameStatus } from '@prisma/client';
 
 @Injectable()
 export class GamesService {
@@ -13,22 +14,37 @@ export class GamesService {
   ) {}
 
   async createGame(createGameDto: CreateGameDto) {
-    const availableSeats = Array.from({ length: 12 }, (_, i) => i + 1);
-    const isPlayer1First = Math.random() < 0.5;
+    await this.prisma.user.upsert({
+      where: { id: createGameDto.player1Id },
+      update: {},
+      create: {
+        id: createGameDto.player1Id,
+        name: 'Player 1',
+        email: `${createGameDto.player1Id}@example.com`,
+        password: 'player-password',
+      },
+    });
 
-    return this.prisma.game.create({
+    const availableSeats = Array.from({ length: 12 }, (_, i) => i + 1);
+
+    const game = await this.prisma.game.create({
       data: {
         player1Id: createGameDto.player1Id,
-        player2Id: createGameDto.player2Id,
-        status: 'WAITING',
-        currentTurn: isPlayer1First
-          ? createGameDto.player1Id
-          : createGameDto.player2Id,
+        player2Id: createGameDto.gameMode === 'cpu' ? 'cpu-player' : null,
+        status:
+          createGameDto.gameMode === 'friend'
+            ? 'WAITING'
+            : createGameDto.gameMode === 'cpu'
+              ? 'SETTING_TRAP'
+              : 'IN_PROGRESS',
+        currentTurn: createGameDto.player1Id,
         availableSeats,
         scores: {
           create: [
             { playerId: createGameDto.player1Id },
-            { playerId: createGameDto.player2Id },
+            ...(createGameDto.gameMode === 'cpu'
+              ? [{ playerId: 'cpu-player' }]
+              : []),
           ],
         },
       },
@@ -37,6 +53,27 @@ export class GamesService {
         player2: true,
         scores: true,
       },
+    });
+
+    return game;
+  }
+
+  async getGameStatus(gameId: string) {
+    return this.prisma.game.findUnique({
+      where: { id: gameId },
+      include: {
+        player1: true,
+        player2: true,
+        scores: true,
+        trap: true,
+        winner: true,
+      },
+    });
+  }
+
+  async getGameScores(gameId: string) {
+    return this.prisma.gameScore.findMany({
+      where: { gameId },
     });
   }
 
@@ -50,37 +87,53 @@ export class GamesService {
       throw new BadRequestException('Game not found');
     }
 
+    if (game.status !== GameStatus.SETTING_TRAP) {
+      throw new BadRequestException('Cannot set trap at this time');
+    }
+
     if (game.currentTurn !== setTrapDto.playerId) {
       throw new BadRequestException('Not your turn');
     }
 
-    if (game.trap) {
-      throw new BadRequestException('Trap already set');
-    }
+    const result = await this.prisma.$transaction(async (tx) => {
+      if (game.trap) {
+        await tx.gameTrap.delete({
+          where: { gameId },
+        });
+      }
 
-    if (!game.availableSeats.includes(setTrapDto.seatNumber)) {
-      throw new BadRequestException('Invalid seat number');
-    }
-
-    if (setTrapDto.seatNumber < 1 || setTrapDto.seatNumber > 12) {
-      throw new BadRequestException('Seat number must be between 1 and 12');
-    }
-
-    return this.prisma.game.update({
-      where: { id: gameId },
-      data: {
-        status: 'IN_PROGRESS',
-        currentTurn:
-          game.player1Id === setTrapDto.playerId
-            ? game.player2Id
-            : game.player1Id,
-        trap: {
-          create: {
-            seatNumber: setTrapDto.seatNumber,
-          },
+      await tx.gameTrap.create({
+        data: {
+          gameId,
+          seatNumber: setTrapDto.seatNumber,
         },
-      },
+      });
+
+      const updatedGame = await tx.game.update({
+        where: { id: gameId },
+        data: {
+          status: GameStatus.IN_PROGRESS,
+          currentTurn:
+            game.player1Id === setTrapDto.playerId
+              ? (game.player2Id ?? game.player1Id)
+              : game.player1Id,
+        },
+      });
+
+      return updatedGame;
     });
+
+    const gameStatusResult = await this.getGameStatus(gameId);
+    this.gamesGateway.notifyGameUpdate(gameId, gameStatusResult);
+
+    // CPUの場合は席を選択
+    if (result.currentTurn === 'cpu-player') {
+      setTimeout(() => {
+        void this.handleCpuMove(gameId);
+      }, 1000);
+    }
+
+    return result;
   }
 
   async selectSeat(gameId: string, selectSeatDto: SelectSeatDto) {
@@ -127,7 +180,6 @@ export class GamesService {
       ? game.availableSeats
       : game.availableSeats.filter((seat) => seat !== selectSeatDto.seatNumber);
 
-    // 勝敗判定ロジック
     let gameStatus = game.status;
     let winnerId: string | null = null;
 
@@ -177,13 +229,16 @@ export class GamesService {
         where: { id: gameId },
         data: {
           availableSeats,
-          status: gameStatus,
+          status:
+            gameStatus === GameStatus.FINISHED
+              ? GameStatus.FINISHED
+              : GameStatus.SETTING_TRAP,
           winnerId,
           currentTurn:
-            gameStatus === 'FINISHED'
-              ? undefined
+            gameStatus === GameStatus.FINISHED
+              ? game.player1Id
               : game.player1Id === selectSeatDto.playerId
-                ? game.player2Id
+                ? (game.player2Id ?? game.player1Id)
                 : game.player1Id,
         },
       });
@@ -194,45 +249,123 @@ export class GamesService {
     const gameStatusResult = await this.getGameStatus(gameId);
     this.gamesGateway.notifyGameUpdate(gameId, gameStatusResult);
 
+    if (
+      result.currentTurn === 'cpu-player' &&
+      result.status !== GameStatus.FINISHED
+    ) {
+      setTimeout(() => {
+        void this.handleCpuMove(gameId);
+      }, 1000);
+    }
+
     return result;
   }
 
-  async getGameStatus(gameId: string) {
+  private async handleCpuTrap(gameId: string) {
+    const game = await this.prisma.game.findUnique({
+      where: { id: gameId },
+    });
+
+    if (!game) return;
+
+    const randomIndex = Math.floor(Math.random() * game.availableSeats.length);
+    const seatNumber = game.availableSeats[randomIndex];
+
+    await this.setTrap(gameId, {
+      playerId: 'cpu-player',
+      seatNumber,
+    });
+  }
+
+  private async handleCpuMove(gameId: string) {
     const game = await this.prisma.game.findUnique({
       where: { id: gameId },
       include: {
-        player1: true,
-        player2: true,
+        trap: true,
         scores: true,
-        rounds: true,
-        trap: {
-          select: {
-            seatNumber: true,
-          },
-          where: {
-            gameId,
-          },
-        },
       },
+    });
+
+    if (!game) return;
+
+    if (game.status === GameStatus.SETTING_TRAP) {
+      // トラップ設置モードの場合
+      const randomIndex = Math.floor(
+        Math.random() * game.availableSeats.length,
+      );
+      const seatNumber = game.availableSeats[randomIndex];
+      await this.setTrap(gameId, {
+        playerId: 'cpu-player',
+        seatNumber,
+      });
+    } else if (game.status === GameStatus.IN_PROGRESS) {
+      // 席選択モードの場合
+      const randomIndex = Math.floor(
+        Math.random() * game.availableSeats.length,
+      );
+      const seatNumber = game.availableSeats[randomIndex];
+      await this.selectSeat(gameId, {
+        playerId: 'cpu-player',
+        seatNumber,
+      });
+    }
+  }
+
+  async joinGame(gameId: string, player2Id: string) {
+    // まずplayer2のユーザーを作成
+    await this.prisma.user.upsert({
+      where: { id: player2Id },
+      update: {},
+      create: {
+        id: player2Id,
+        name: 'Player 2',
+        email: `${player2Id}@example.com`,
+        password: 'player-password',
+      },
+    });
+
+    const game = await this.prisma.game.findUnique({
+      where: { id: gameId },
+      include: { scores: true },
     });
 
     if (!game) {
       throw new BadRequestException('Game not found');
     }
 
-    const gameWithOptionalTrap = { ...game, trap: game.trap || undefined };
-    if (gameWithOptionalTrap.status !== 'FINISHED') {
-      delete gameWithOptionalTrap.trap;
-    }
-    return gameWithOptionalTrap;
-  }
+    // トランザクションで更新
+    const updatedGame = await this.prisma.$transaction(async (tx) => {
+      // スコアを作成
+      await tx.gameScore.create({
+        data: {
+          gameId,
+          playerId: player2Id,
+          score: 0,
+          failures: 0,
+          isResetted: false,
+        },
+      });
 
-  async getGameScores(gameId: string) {
-    return this.prisma.gameScore.findMany({
-      where: { gameId },
-      include: {
-        player: true,
-      },
+      // ゲームの更新
+      return await tx.game.update({
+        where: { id: gameId },
+        data: {
+          player2Id,
+          status: 'SETTING_TRAP',
+        },
+        include: {
+          player1: true,
+          player2: true,
+          scores: {
+            include: {
+              player: true,
+            },
+          },
+        },
+      });
     });
+
+    this.gamesGateway.notifyGameUpdate(gameId, updatedGame);
+    return updatedGame;
   }
 }
