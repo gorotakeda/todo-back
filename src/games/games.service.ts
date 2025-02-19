@@ -163,16 +163,19 @@ export class GamesService {
       (s) => s.playerId !== selectSeatDto.playerId,
     );
 
-    const updatedScore = hasTrap
-      ? {
-          failures: (playerScore.failures ?? 0) + 1,
-          score: 0,
-          isResetted: true,
-        }
-      : {
-          failures: playerScore.failures ?? 0,
-          score: playerScore.score + selectSeatDto.seatNumber,
-        };
+    const updatedScore = {
+      failures: hasTrap ? (playerScore.failures ?? 0) + 1 : playerScore.failures ?? 0,
+      score: hasTrap ? 0 : playerScore.score + selectSeatDto.seatNumber,
+      isResetted: hasTrap,
+    };
+
+    // トラップに引っかかっていない場合は、他のプレイヤーのisResettedをfalseにリセット
+    if (!hasTrap) {
+      await this.prisma.gameScore.updateMany({
+        where: { gameId },
+        data: { isResetted: false },
+      });
+    }
 
     const availableSeats = hasTrap
       ? game.availableSeats
@@ -205,11 +208,25 @@ export class GamesService {
     }
 
     const result = await this.prisma.$transaction(async (tx) => {
+      // 全プレイヤーのisResettedをリセット
+      await tx.gameScore.updateMany({
+        where: { gameId },
+        data: { isResetted: false },
+      });
+
       // スコアの更新
       await tx.gameScore.update({
         where: { id: playerScore.id },
         data: updatedScore,
       });
+
+      // トラップに引っかかった場合のみ、isResettedをtrueに設定
+      if (hasTrap) {
+        await tx.gameScore.update({
+          where: { id: playerScore.id },
+          data: { isResetted: true },
+        });
+      }
 
       // ラウンドの記録
       await tx.gameRound.create({
@@ -236,6 +253,16 @@ export class GamesService {
             gameStatus === GameStatus.FINISHED
               ? game.player1Id
               : selectSeatDto.playerId,
+        },
+        include: {
+          player1: true,
+          player2: true,
+          scores: {
+            include: {
+              player: true
+            }
+          },
+          trap: true,
         },
       });
       return updatedGame;
