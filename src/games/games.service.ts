@@ -80,7 +80,7 @@ export class GamesService {
   async setTrap(gameId: string, setTrapDto: SetTrapDto) {
     const game = await this.prisma.game.findUnique({
       where: { id: gameId },
-      include: { trap: true },
+      include: { trap: true, player1: true, player2: true },
     });
 
     if (!game) {
@@ -109,30 +109,28 @@ export class GamesService {
         },
       });
 
-      const updatedGame = await tx.game.update({
+      // 次のプレイヤーのターンに切り替え
+      const nextTurn =
+        game.currentTurn === game.player1Id
+          ? (game.player2Id ?? game.player1Id)
+          : game.player1Id;
+
+      return await tx.game.update({
         where: { id: gameId },
         data: {
           status: GameStatus.IN_PROGRESS,
-          currentTurn:
-            game.player1Id === setTrapDto.playerId
-              ? (game.player2Id ?? game.player1Id)
-              : game.player1Id,
+          currentTurn: nextTurn,
+        },
+        include: {
+          player1: true,
+          player2: true,
+          scores: true,
+          trap: true,
         },
       });
-
-      return updatedGame;
     });
 
-    const gameStatusResult = await this.getGameStatus(gameId);
-    this.gamesGateway.notifyGameUpdate(gameId, gameStatusResult);
-
-    // CPUの場合は席を選択
-    if (result.currentTurn === 'cpu-player') {
-      setTimeout(() => {
-        void this.handleCpuMove(gameId);
-      }, 1000);
-    }
-
+    this.gamesGateway.notifyGameUpdate(gameId, result);
     return result;
   }
 
@@ -237,9 +235,7 @@ export class GamesService {
           currentTurn:
             gameStatus === GameStatus.FINISHED
               ? game.player1Id
-              : game.player1Id === selectSeatDto.playerId
-                ? (game.player2Id ?? game.player1Id)
-                : game.player1Id,
+              : selectSeatDto.playerId,
         },
       });
       return updatedGame;
