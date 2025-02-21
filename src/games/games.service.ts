@@ -30,21 +30,13 @@ export class GamesService {
     const game = await this.prisma.game.create({
       data: {
         player1Id: createGameDto.player1Id,
-        player2Id: createGameDto.gameMode === 'cpu' ? 'cpu-player' : null,
-        status:
-          createGameDto.gameMode === 'friend'
-            ? 'WAITING'
-            : createGameDto.gameMode === 'cpu'
-              ? 'SETTING_TRAP'
-              : 'IN_PROGRESS',
+        player2Id: null,
+        status: 'WAITING',
         currentTurn: createGameDto.player1Id,
         availableSeats,
         scores: {
           create: [
-            { playerId: createGameDto.player1Id },
-            ...(createGameDto.gameMode === 'cpu'
-              ? [{ playerId: 'cpu-player' }]
-              : []),
+            { playerId: createGameDto.player1Id }
           ],
         },
       },
@@ -272,66 +264,7 @@ export class GamesService {
     const gameStatusResult = await this.getGameStatus(gameId);
     this.gamesGateway.notifyGameUpdate(gameId, gameStatusResult);
 
-    if (
-      result.currentTurn === 'cpu-player' &&
-      result.status !== GameStatus.FINISHED
-    ) {
-      setTimeout(() => {
-        void this.handleCpuMove(gameId);
-      }, 1000);
-    }
-
     return result;
-  }
-
-  private async handleCpuTrap(gameId: string) {
-    const game = await this.prisma.game.findUnique({
-      where: { id: gameId },
-    });
-
-    if (!game) return;
-
-    const randomIndex = Math.floor(Math.random() * game.availableSeats.length);
-    const seatNumber = game.availableSeats[randomIndex];
-
-    await this.setTrap(gameId, {
-      playerId: 'cpu-player',
-      seatNumber,
-    });
-  }
-
-  private async handleCpuMove(gameId: string) {
-    const game = await this.prisma.game.findUnique({
-      where: { id: gameId },
-      include: {
-        trap: true,
-        scores: true,
-      },
-    });
-
-    if (!game) return;
-
-    if (game.status === GameStatus.SETTING_TRAP) {
-      // トラップ設置モードの場合
-      const randomIndex = Math.floor(
-        Math.random() * game.availableSeats.length,
-      );
-      const seatNumber = game.availableSeats[randomIndex];
-      await this.setTrap(gameId, {
-        playerId: 'cpu-player',
-        seatNumber,
-      });
-    } else if (game.status === GameStatus.IN_PROGRESS) {
-      // 席選択モードの場合
-      const randomIndex = Math.floor(
-        Math.random() * game.availableSeats.length,
-      );
-      const seatNumber = game.availableSeats[randomIndex];
-      await this.selectSeat(gameId, {
-        playerId: 'cpu-player',
-        seatNumber,
-      });
-    }
   }
 
   async joinGame(gameId: string, player2Id: string) {

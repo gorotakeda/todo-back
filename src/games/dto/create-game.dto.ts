@@ -1,5 +1,5 @@
 export class CreateGameDto {
   player1Id: string;
-  gameMode: 'cpu' | 'friend';
+  gameMode: 'friend';
   availableSeats: number[];
 }
