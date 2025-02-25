@@ -35,9 +35,7 @@ export class GamesService {
         currentTurn: createGameDto.player1Id,
         availableSeats,
         scores: {
-          create: [
-            { playerId: createGameDto.player1Id }
-          ],
+          create: [{ playerId: createGameDto.player1Id }],
         },
       },
       include: {
@@ -156,7 +154,9 @@ export class GamesService {
     );
 
     const updatedScore = {
-      failures: hasTrap ? (playerScore.failures ?? 0) + 1 : playerScore.failures ?? 0,
+      failures: hasTrap
+        ? (playerScore.failures ?? 0) + 1
+        : (playerScore.failures ?? 0),
       score: hasTrap ? 0 : playerScore.score + selectSeatDto.seatNumber,
       isResetted: hasTrap,
     };
@@ -251,8 +251,8 @@ export class GamesService {
           player2: true,
           scores: {
             include: {
-              player: true
-            }
+              player: true,
+            },
           },
           trap: true,
         },
