@@ -184,8 +184,8 @@ export class GamesService {
       // ②40点到達の判定
       gameStatus = 'FINISHED';
       winnerId = selectSeatDto.playerId;
-    } else if (availableSeats.length === 0) {
-      // ③全ての席がなくなった時の判定
+    } else if (availableSeats.length <= 1) {
+      // ③席が残り1つ以下になった時の判定
       gameStatus = 'FINISHED';
       const finalPlayerScore = !hasTrap
         ? playerScore.score + selectSeatDto.seatNumber
