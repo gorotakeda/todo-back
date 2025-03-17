@@ -12,6 +12,9 @@ COPY . .
 
 RUN npx prisma generate
 
-EXPOSE 8000
+# ここを8080に変更
+EXPOSE 8080
 
-CMD ["npm", "run", "start:dev"]
+# 環境変数PORTを使用するように修正
+CMD ["sh", "-c", "npx prisma migrate deploy && npm run start:dev -- --port ${PORT:-8080}"]
+
